@@ -174,8 +174,8 @@ export default function Page() {
       <Script src="https://unpkg.com/mxgraph/javascript/mxClient.min.js" strategy="beforeInteractive" />
       <div className="min-h-screen bg-gray-50 flex flex-col">
         <header className="bg-white shadow-sm border-b border-gray-200 px-6 py-4">
-          <h1 className="text-2xl font-bold text-gray-900">Process Map Viewer</h1>
-          <p className="text-sm text-gray-600 mt-1">Interactive business process visualization</p>
+          <h1 className="text-2xl font-bold text-gray-900">Yash Process Map Viewer</h1>
+          <p className="text-sm text-gray-600 mt-1">SAP BUSINESS PROCESS</p>
         </header>
 
         <div className="bg-white border-b border-gray-200 px-6 py-3 flex justify-between items-center">
