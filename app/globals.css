@@ -96,3 +96,12 @@
 .diagram-container {
   @apply w-full h-full bg-white border border-gray-200 rounded-lg shadow-sm;
 }
+
+
+.bg-primary {
+  background-color: #2C6CEE;
+}
+
+.text-white {
+  color: white;
+}
