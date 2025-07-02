@@ -264,8 +264,8 @@ export default function Page() {
               </div>
               <div>
                 <h1 className="text-2xl font-bold text-white">YASH SAP Process Map Viewer</h1>
-                <p className="text-sm text-gray-200">Professional Process Diagram Viewer with Tooltips</p>
-              </div>
+                
+                              </div>
             </div>
           </div>
         </div>
