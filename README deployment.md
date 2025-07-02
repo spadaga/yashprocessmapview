@@ -67,14 +67,45 @@ az webapp deploy \
 # Test changes with: npm run dev
 # Commit to GitHub
 git add .
-git commit -m "Description of changes"
+git commit -m "bg color -heade"
 git push origin main
 
 
 #### **Deploy via Azure Cloud Shell**
 
 # Navigate to project directory
+
+mkdir processmap-viewer
+cd processmap-viewer
+or--------
 cd ~/processmap-viewer/processmap-viewer
+
+git clone https://github.com/spadaga/yashprocessmapview.git processmap-viewer
+
+
+az webapp deploy \
+  --resource-group processmap-viewer-rg \
+  --name processmap-viewer-app \
+  --src-path app-deploy.zip \
+  --type zip
+
+
+  ------------------------------------
+  satya [ ~ ]$ mkdir processmap-viewer
+cd processmap-viewer
+  satya [ ~/processmap-viewer ]$ git clone https://github.com/spadaga/yashprocessmapview.git processmap-viewer
+satya [ ~/processmap-viewer ]$ cd processmap-viewer
+  satya [ ~/processmap-viewer/processmap-viewer ]$
+  > zip -r app-deploy.zip . -x "node_modules/*" ".git/*" "*.zip"
+
+  satya [ ~/processmap-viewer/processmap-viewer ]$ az webapp deploy \
+  --resource-group processmap-viewer-rg \
+  --name processmap-viewer-app \
+  --src-path app-deploy.zip \
+  --type zip
+
+
+  ---------------------------------
 
 # Pull latest changes from GitHub
 git pull origin main

@@ -1,17 +1,15 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import Script from "next/script"
-import { NodeNextRequest } from "next/dist/server/base-http/node"
 
 export default function Page() {
   const containerRef = useRef(null)
   const [xmlContent, setXmlContent] = useState(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState(null)
-  const [zoomLevel, setZoomLevel] = useState(100)
+  const [tooltip, setTooltip] = useState({ show: false, content: '', x: 0, y: 0 })
 
-  // Load default sourcemap.xml from public on first render
+  // Fetch default diagram on mount
   useEffect(() => {
     if (!xmlContent) {
       setIsLoading(true)
@@ -25,13 +23,13 @@ export default function Page() {
           setError(null)
         })
         .catch((err) => {
-          console.error("❌ Failed to fetch default XML:", err)
           setError(err.message)
         })
         .finally(() => setIsLoading(false))
     }
   }, [xmlContent])
 
+  // Handle file upload
   const handleFileUpload = (event) => {
     const file = event.target.files?.[0]
     if (file) {
@@ -50,128 +48,168 @@ export default function Page() {
     }
   }
 
-  useEffect(() => {
-    const tryRender = () => {
-      if (
-        typeof window !== "undefined" &&
-        window.mxGraph &&
-        window.mxUtils &&
-        window.mxCodec &&
-        window.mxGraphModel &&
-        window.mxRubberband &&
-        window.mxPanningHandler &&
-        xmlContent &&
-        containerRef.current
-      ) {
-        renderGraph(xmlContent)
-        return true
-      }
-      return false
-    }
-
-    const interval = setInterval(() => {
-      if (tryRender()) clearInterval(interval)
-    }, 100)
-
-    return () => clearInterval(interval)
-  }, [xmlContent])
-
-  const renderGraph = (xml) => {
+  // Parse XML to extract node information for tooltips
+  const parseNodeData = (xml) => {
     try {
       const parser = new DOMParser()
-      const doc = parser.parseFromString(xml, "text/xml")
-      const diagramNode = doc.getElementsByTagName("diagram")[0]
-      if (!diagramNode) throw new Error("No diagram found in XML")
+      const xmlDoc = parser.parseFromString(xml, "text/xml")
+      const cells = xmlDoc.querySelectorAll('mxCell')
+      const nodeData = {}
 
-      const diagramXml = diagramNode.innerHTML || new XMLSerializer().serializeToString(diagramNode.firstChild)
-      const xmlDoc = window.mxUtils.parseXml(diagramXml)
-      const codec = new window.mxCodec(xmlDoc)
-      const model = new window.mxGraphModel()
-      codec.decode(xmlDoc.documentElement, model)
+      cells.forEach(cell => {
+        const id = cell.getAttribute('id')
+        const value = cell.getAttribute('value')
+        if (value && value.trim() !== '') {
+          const decodedValue = decodeURIComponent(value.replace(/</g, '<').replace(/>/g, '>').replace(/&/g, '&'))
+          const tooltipContent = decodedValue.replace(/<[^>]*>/g, '') // Remove HTML tags
+          nodeData[id] = { content: tooltipContent }
+        }
+      })
 
+      console.log("Parsed node data:", nodeData)
+      return nodeData
+    } catch (err) {
+      console.error('Error parsing XML for tooltip data:', err)
+      return {}
+    }
+  }
+
+  // Render diagram viewer with tooltip support
+  const renderDiagramViewer = (xml) => {
+    try {
       const container = containerRef.current
       container.innerHTML = ""
 
-      const graph = new window.mxGraph(container, model)
-      window.graph = graph
+      // Parse node data for tooltips
+      const nodeData = parseNodeData(xml)
 
-      graph.setHtmlLabels(true)
-      graph.setConnectable(false)
-      graph.setPanning(true)
-      graph.panningHandler.useLeftButtonForPanning = true
-      graph.setTooltips(true)
-      graph.setEnabled(true)
-      graph.setCellsResizable(false)
-      graph.setCellsMovable(false)
-      graph.setCellsEditable(false)
+      // Create iframe with viewer settings
+      const iframe = document.createElement("iframe")
+      iframe.style.width = "100%"
+      iframe.style.height = "100%"
+      iframe.style.border = "none"
+      iframe.style.backgroundColor = "#ffffff"
 
-      new window.mxPanningHandler(graph)
-      new window.mxRubberband(graph)
+      const encodedXml = encodeURIComponent(xml)
+      const viewerParams = new URLSearchParams({
+        lightbox: "1",
+        highlight: "0000ff",
+        
+        layers: "1",
+        nav: "1",
+        title: "Process Map",
+        bg: "white",
+        "page-bg": "white",
+        fit: "1",
+        zoom: "fit",
+        scale: "1.2",
+        center: "1",
+        tooltips: "1",
+        enableMouseEvents: "1", // Added to ensure mouse events are sent
+      })
 
-      container.style.cursor = "grab"
-      container.addEventListener("mousedown", () => (container.style.cursor = "grabbing"))
-      container.addEventListener("mouseup", () => (container.style.cursor = "grab"))
+      iframe.src = `https://viewer.diagrams.net/?${viewerParams.toString()}#R${encodedXml}`
 
-      graph.getModel().beginUpdate()
-      try {
-        graph.refresh()
-        setTimeout(() => fitDiagramToView(), 300)
-      } finally {
-        graph.getModel().endUpdate()
+      // Message handler for tooltip events
+      const messageHandler = (event) => {
+        if (event.origin !== "https://viewer.diagrams.net") return
+
+        console.log("Received message from viewer:", event.data)
+
+        try {
+          const data = typeof event.data === "string" ? JSON.parse(event.data) : event.data
+
+          if (data.event === "init") {
+            // Configure viewer for tooltips
+            iframe.contentWindow.postMessage(
+              JSON.stringify({
+                action: "configure",
+                config: {
+                  exportBg: "white",
+                  exportTransparent: false,
+                  fitWindow: true,
+                  center: true,
+                  tooltips: true,
+                  enableTooltips: true,
+                  mouseEvents: true,
+                },
+              }),
+              "https://viewer.diagrams.net"
+            )
+            console.log("Sent tooltip configuration to viewer")
+          } else if (data.event === "pointermove" || data.event === "mouseover" || data.event === "mousemove") {
+            // Handle tooltip display
+            const cellId = data.cellId || data.id
+            if (cellId && nodeData[cellId]) {
+              const rect = container.getBoundingClientRect()
+              setTooltip({
+                show: true,
+                content: nodeData[cellId].content,
+                x: (data.x || 0) + rect.left + 10,
+                y: (data.y || 0) + rect.top - 10,
+              })
+              console.log("Showing tooltip for cell:", cellId, nodeData[cellId].content)
+            } else {
+              setTooltip(prev => ({ ...prev, show: false }))
+              console.log("No tooltip data for cellId:", cellId)
+            }
+          } else if (data.event === "pointerout" || data.event === "mouseout") {
+            setTooltip(prev => ({ ...prev, show: false }))
+            console.log("Hiding tooltip")
+          }
+        } catch (e) {
+          console.log("Ignoring invalid message data:", e.message)
+        }
+      }
+
+      window.addEventListener("message", messageHandler)
+
+      iframe.onload = () => {
+        console.log("✅ Diagram viewer loaded")
+        // Send fit-to-view configuration
+        setTimeout(() => {
+          iframe.contentWindow.postMessage(
+            JSON.stringify({
+              action: "fit",
+              config: {
+                fitWindow: true,
+                center: true,
+                maxScale: 2,
+                minScale: 0.5,
+              },
+            }),
+            "https://viewer.diagrams.net"
+          )
+        }, 1000)
+      }
+
+      container.appendChild(iframe)
+
+      // Store cleanup function
+      container._cleanup = () => {
+        window.removeEventListener("message", messageHandler)
+        setTooltip({ show: false, content: '', x: 0, y: 0 })
       }
     } catch (err) {
-      console.error("Error rendering graph:", err)
+      console.error("Error rendering diagram viewer:", err)
       setError("Failed to render diagram")
     }
   }
 
-  const fitDiagramToView = () => {
-    const graph = window.graph
-    const container = containerRef.current
-    if (!graph || !container) return
-
-    const bounds = graph.getGraphBounds()
-    if (bounds.width === 0 || bounds.height === 0) return
-
-    const padding = 20
-    const containerWidth = container.clientWidth
-    const containerHeight = container.clientHeight
-
-    const scaleX = (containerWidth - padding * 2) / bounds.width
-    const scaleY = (containerHeight - padding * 2) / bounds.height
-    const scale = Math.min(scaleX, scaleY, 1)
-
-    graph.view.setScale(scale)
-    graph.view.setTranslate(-bounds.x + padding / scale, -bounds.y + padding / scale)
-
-    container.scrollLeft = bounds.x * scale - padding
-    container.scrollTop = bounds.y * scale - padding
-
-    setZoomLevel(Math.round(scale * 100))
-  }
-
-  const handleZoomIn = () => {
-    if (window.graph) {
-      window.graph.zoomIn()
-      setZoomLevel(Math.round(window.graph.view.scale * 100))
+  useEffect(() => {
+    if (xmlContent && containerRef.current) {
+      if (containerRef.current._cleanup) {
+        containerRef.current._cleanup()
+      }
+      renderDiagramViewer(xmlContent)
     }
-  }
 
-  const handleZoomOut = () => {
-    if (window.graph) {
-      window.graph.zoomOut()
-      setZoomLevel(Math.round(window.graph.view.scale * 100))
+    return () => {
+      if (containerRef.current && containerRef.current._cleanup) {
+        containerRef.current._cleanup()
+      }
     }
-  }
-
-  const handleFitView = () => fitDiagramToView()
-
-  const handleActualSize = () => {
-    if (window.graph) {
-      window.graph.zoomActual()
-      setZoomLevel(100)
-    }
-  }
+  }, [xmlContent])
 
   if (isLoading) {
     return (
@@ -209,132 +247,73 @@ export default function Page() {
   }
 
   return (
-    <>
-      <Script src="https://unpkg.com/mxgraph/javascript/mxClient.min.js" strategy="beforeInteractive" />
-      <div className="min-h-screen bg-gray-50 flex flex-col">
-        {/* Header */}
-        <header className="bg-white shadow-sm border-b border-gray-200">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 bg-primary">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-4">
-                <div className="w-10 h-10 bg-gradient-to-r from-primary-500 to-primary-600 rounded-lg flex items-center justify-center">
-                  <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
-                    />
-                  </svg>
-                </div>
-                <div>
-                  <h1 className="text-2xl font-bold text-white">YASH SAP Process Map Viewer</h1>
-                  <p className="text-sm text-gray-600"></p>
-                </div>
+    <div className="min-h-screen flex flex-col">
+      <header className="bg-white shadow-sm border-b border-gray-200">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 bg-primary">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <div className="w-10 h-10 bg-gradient-to-r from-primary-500 to-primary-600 rounded-lg flex items-center justify-center">
+                <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
+                  />
+                </svg>
               </div>
-             
-            </div>
-          </div>
-        </header>
-
-        {/* Toolbar */}
-        <div className="bg-white border-b border-gray-200 shadow-sm">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <button onClick={handleZoomIn} className="toolbar-btn">
-                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7"
-                    />
-                  </svg>
-                  Zoom In
-                </button>
-                <button onClick={handleZoomOut} className="toolbar-btn">
-                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM13 10H7"
-                    />
-                  </svg>
-                  Zoom Out
-                </button>
-                <button onClick={handleFitView} className="toolbar-btn">
-                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"
-                    />
-                  </svg>
-                  Fit to View
-                </button>
-                <button onClick={handleActualSize} className="toolbar-btn">
-                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4h16v16H4V4z" />
-                  </svg>
-                  Actual Size
-                </button>
-              </div>
-
-              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-                <div className="flex items-center space-x-3">
-                  <label className="text-sm font-medium text-gray-700">Upload XML:</label>
-                  <input type="file" accept=".xml" onChange={handleFileUpload} className="input-file" />
-                </div>
-                <div className="flex items-center space-x-2">
-                  <span className="text-sm text-gray-600 font-medium">Zoom:</span>
-                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 font-mono">
-                    {zoomLevel}%
-                  </span>
-                </div>
+              <div>
+                <h1 className="text-2xl font-bold text-white">YASH SAP Process Map Viewer</h1>
+                <p className="text-sm text-gray-200">Professional Process Diagram Viewer with Tooltips</p>
               </div>
             </div>
           </div>
         </div>
+      </header>
 
-        {/* Main Content */}
-        <main className="flex-1 p-4 sm:p-6">
-          <div className="max-w-7xl mx-auto h-full">
-            <div className="card h-full overflow-hidden">
-              <div
-                ref={containerRef}
-                className="w-full h-full custom-scrollbar"
-                style={{
-                  height: "calc(100vh - 180px)",
-                 
-                  overflow: "auto",
-                  cursor: "grab",
-                  backgroundColor: "#fafafa",
-                }}
-              />
+      <div className="bg-white border-b border-gray-200 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div className="flex items-center space-x-3">
+              <label className="text-sm font-medium text-gray-700">Upload XML:</label>
+              <input type="file" accept=".xml,.drawio" onChange={handleFileUpload} className="input-file" />
             </div>
+           
           </div>
-        </main>
-
-        {/* Footer */}
-        <footer className="bg-white border-t border-gray-200" style={{display:"none"}}>
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-            <div className="flex flex-col sm:flex-row justify-between items-center text-sm text-gray-500 gap-2">
-              <p className="flex items-center">
-                <span className="font-medium text-gray-700 mr-2">Process Map Viewer</span>
-                Interactive Diagram Tool
-              </p>
-              <p className="flex items-center">
-                Powered by
-                <span className="mx-1 font-medium text-primary-600">mxGraph</span>&
-                <span className="ml-1 font-medium text-gray-700">Next.js</span>
-              </p>
-            </div>
-          </div>
-        </footer>
+        </div>
       </div>
-    </>
+
+      <main className="flex-1 p-4 sm:p-6 relative">
+        <div className="max-w-7xl mx-auto h-full">
+          <div className="card h-full overflow-hidden relative">
+            <div
+              ref={containerRef}
+              className="w-full h-full"
+              style={{
+                height: "calc(100vh - 200px)",
+                overflow: "hidden",
+                backgroundColor: "#ffffff",
+                border: "1px solid #e5e7eb",
+                borderRadius: "8px",
+                margin: "0 16px",
+              }}
+            />
+            {tooltip.show && (
+              <div
+                className="absolute z-50 bg-gray-900 text-white text-sm rounded-lg px-3 py-2 shadow-lg pointer-events-none max-w-xs"
+                style={{
+                  left: tooltip.x,
+                  top: tooltip.y,
+                  transform: 'translate(10px, -100%)',
+                }}
+              >
+                <div className="whitespace-pre-line">{tooltip.content}</div>
+                <div className="absolute top-full left-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"></div>
+              </div>
+            )}
+          </div>
+        </div>
+      </main>
+    </div>
   )
 }

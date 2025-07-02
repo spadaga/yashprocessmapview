@@ -5,7 +5,11 @@ export const metadata = {
   description: "Professional process map visualization tool with interactive features",
   keywords: "process map, diagram viewer, business process, workflow visualization",
   authors: [{ name: "Process Map Team" }],
-  viewport: "width=device-width, initial-scale=1",
+}
+
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
 }
 
 export default function RootLayout({ children }) {
